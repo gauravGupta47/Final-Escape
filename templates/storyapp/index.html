@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block title %}Welcome to AI Story Wall{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-lg">
+            <div class="card-body text-center p-5">
+                <h1 class="display-4 mb-4">Welcome to AI Story Wall</h1>
+                <p class="lead mb-4">Create interactive comics with AI-generated stories and images!</p>
+                
+                <div class="row justify-content-center">
+                    <div class="col-md-8">
+                        <form method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label for="{{ form.email.id_for_label }}" class="form-label">Enter your email to start:</label>
+                                {{ form.email }}
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-lg">Start Creating</button>
+                        </form>
+                    </div>
+                </div>
+                
+                <div class="mt-5">
+                    <h3>How it works:</h3>
+                    <div class="row mt-4">
+                        <div class="col-md-4 mb-3">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">1. Choose a Theme</h5>
+                                    <p class="card-text">Select a theme and name your main character.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">2. Create Your Story</h5>
+                                    <p class="card-text">Interact with AI to build your unique comic story.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">3. Get Your Comic</h5>
+                                    <p class="card-text">Receive a PDF comic book of your story by email.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

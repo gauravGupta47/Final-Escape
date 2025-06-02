@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Create Your Story{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h3 class="mb-0">Create Your Story</h3>
+            </div>
+            <div class="card-body p-4">
+                <p class="lead mb-4">Welcome, {{ user.email }}! Let's create a comic story together.</p>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="{{ form.theme.id_for_label }}" class="form-label">Choose a theme:</label>
+                        {{ form.theme }}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.character_name.id_for_label }}" class="form-label">Name your main character:</label>
+                        {{ form.character_name }}
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg">Create Story</button>
+                    </div>
+                </form>
+                
+                <div class="mt-5">
+                    <h4>Available Themes:</h4>
+                    <div class="row mt-3">
+                        {% for theme in themes %}
+                        <div class="col-md-6 mb-3">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">{{ theme.name }}</h5>
+                                    <p class="card-text">{{ theme.description|truncatewords:20 }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="col-12">
+                            <div class="alert alert-warning">
+                                No themes available. Please contact the administrator.
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
