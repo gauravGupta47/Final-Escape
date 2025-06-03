@@ -1,11 +1,11 @@
 import os
 import uuid
-import openai
+import time  # Add time import for timing operations
 import replicate
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.core.mail import EmailMessage
 from PIL import Image, ImageDraw, ImageFont
@@ -13,6 +13,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from io import BytesIO
 import requests
+import threading
 
 from .models import User, Theme, Story, StoryResponse
 from .forms import UserForm, StoryForm, StoryResponseForm
@@ -59,7 +60,6 @@ else:
     if 'REPLICATE_API_TOKEN' in os.environ:
         del os.environ['REPLICATE_API_TOKEN']
     print("WARNING: REPLICATE_API_TOKEN is not set. Image generation will not work.")
-
 
 def index(request):
     """Home page view."""
@@ -112,6 +112,8 @@ def create_story(request):
                 return redirect('continue_story', story_id=story.id)
             except Exception as e:
                 print(f"Error creating story: {e}")
+                messages.error(request, f"Error creating story: {str(e)}")
+                
                 # Create story without image if generation fails
                 story = Story.objects.create(
                     user=user,
@@ -120,15 +122,7 @@ def create_story(request):
                     plot_text=plot_text
                 )
                 
-                # Add error message to context
-                error_message = "Failed to generate story image. Please try again later."
-                return render(request, 'storyapp/create_story.html', {
-                    'form': form,
-                    'themes': themes,
-                    'error_message': error_message
-                })
-            
-            return redirect('continue_story', story_id=story.id)
+                return redirect('continue_story', story_id=story.id)
     else:
         form = StoryForm()
     
@@ -152,6 +146,22 @@ def continue_story(request, story_id):
     story = get_object_or_404(Story, id=story_id)
     responses = StoryResponse.objects.filter(story=story).order_by('created_at')
     
+    # Get the latest response for image status checking
+    latest_response = responses.last()
+    
+    # Initialize context variables
+    context = {
+        'form': StoryResponseForm(),
+        'story': story,
+        'responses': responses,
+        'processing': False,
+        'current_user_input': None,
+        'current_ai_response': None,
+        'current_user_img': None,
+        'current_ai_img': None,
+        'latest_response': latest_response,
+    }
+    
     if request.method == 'POST':
         form = StoryResponseForm(request.POST)
         if form.is_valid():
@@ -168,32 +178,51 @@ def continue_story(request, story_id):
             # Add current user input
             story_context += f"User: {user_input}\n"
             
-            try:
-                # Generate AI response using GPT
-                ai_response = generate_ai_response(story_context)
-                
-                # Generate images using Stable Diffusion
-                user_img_path = generate_user_image(user_input, story.character_name)
-                ai_img_path = generate_ai_image(ai_response)
-                
-                # Create story response
-                response = StoryResponse.objects.create(
-                    story=story,
-                    user_input=user_input,
-                    ai_response=ai_response,
-                    user_img_path=user_img_path,
-                    ai_img_path=ai_img_path
-                )
-            except Exception as e:
-                print(f"Error in continue_story: {e}")
-                # Create story response without images if generation fails
-                ai_response = generate_ai_response(story_context)
-                response = StoryResponse.objects.create(
-                    story=story,
-                    user_input=user_input,
-                    ai_response=ai_response
-                )
-                messages.error(request, "Failed to generate images. The story will continue without them.")
+            # Generate AI response using GPT
+            ai_response = generate_ai_response(story_context)
+            
+            # Create response object first (without images)
+            response = StoryResponse.objects.create(
+                story=story,
+                user_input=user_input,
+                ai_response=ai_response
+            )
+            
+            # Set processing flag and current inputs for template
+            context['processing'] = True
+            context['current_user_input'] = user_input
+            context['current_ai_response'] = ai_response
+            
+            # Start a background thread to generate images
+            def generate_images_thread():
+                try:
+                    # Generate user image
+                    print("Generating user image...")
+                    user_img_path = generate_user_image(user_input, story.character_name)
+                    if user_img_path:
+                        response.user_img_path = user_img_path
+                        response.save()
+                        print(f"User image saved: {user_img_path}")
+                    else:
+                        print("Failed to generate user image")
+                    
+                    # Generate AI image
+                    print("Generating AI image...")
+                    ai_img_path = generate_ai_image(ai_response)
+                    if ai_img_path:
+                        response.ai_img_path = ai_img_path
+                        response.save()
+                        print(f"AI image saved: {ai_img_path}")
+                    else:
+                        print("Failed to generate AI image")
+                    
+                except Exception as e:
+                    print(f"Error generating images: {e}")
+            
+            # Start the thread for image generation
+            image_thread = threading.Thread(target=generate_images_thread)
+            image_thread.daemon = True
+            image_thread.start()
             
             # If we have 10 responses, generate PDF and send email
             if responses.count() >= 9:  # 9 existing + 1 new = 10 total
@@ -201,14 +230,21 @@ def continue_story(request, story_id):
                 send_email(story)
                 return redirect('story_complete', story_id=story.id)
             
+            # Redirect to refresh the page and show the new response
             return redirect('continue_story', story_id=story.id)
-    else:
-        form = StoryResponseForm()
     
-    return render(request, 'storyapp/continue_story.html', {
-        'form': form,
-        'story': story,
-        'responses': responses
+    return render(request, 'storyapp/continue_story.html', context)
+
+# Add a new view to check image generation status
+def check_image_status(request, response_id):
+    """AJAX endpoint to check if images have been generated."""
+    response = get_object_or_404(StoryResponse, id=response_id)
+    
+    return JsonResponse({
+        'user_img_ready': bool(response.user_img_path),
+        'ai_img_ready': bool(response.ai_img_path),
+        'user_img_path': response.user_img_path if response.user_img_path else None,
+        'ai_img_path': response.ai_img_path if response.ai_img_path else None,
     })
 
 
@@ -274,7 +310,7 @@ def generate_ai_response(story_context):
 
 
 def generate_plot_image(plot_text):
-    """Generate a 3-panel comic image for the plot using Stable Diffusion."""
+    """Generate a 3-panel comic image for the plot using Replicate."""
     # Check if Replicate API token is set
     if not settings.REPLICATE_API_TOKEN:
         print("Cannot generate image: REPLICATE_API_TOKEN is not set")
@@ -282,23 +318,34 @@ def generate_plot_image(plot_text):
         
     # Create prompt for a 3-panel comic based on the plot
     prompt = f"Create a comic-style black and white storyboard with 3 panels showing: {plot_text[:300]}"
+    print(f"Plot image prompt: {prompt}")
     
     # Use Replicate API to generate image
     try:
+        print("Generating image with Replicate...")
+        start_time = time.time()
+        
         output = replicate.run(
-            "stability-ai/sdxl:latest",
+            "stability-ai/sdxl-lightning:latest",  # Faster model
             input={
                 "prompt": prompt,
-                "width": 1024,
-                "height": 512,
-                "num_outputs": 1
+                "width": 768,
+                "height": 384,  # Wider format for 3 panels
+                "num_outputs": 1,
+                "guidance_scale": 7.5,
+                "negative_prompt": "color, detailed, complex, photorealistic"
             }
         )
         
         # Download the image
         if output and len(output) > 0:
             image_url = output[0]
+            print(f"Image generated, URL: {image_url}")
+            
             response = requests.get(image_url)
+            if response.status_code != 200:
+                print(f"Failed to download image: {response.status_code}")
+                return None
             
             # Create a unique filename
             filename = f"plot_{uuid.uuid4().hex}.jpg"
@@ -311,16 +358,20 @@ def generate_plot_image(plot_text):
             with open(filepath, 'wb') as f:
                 f.write(response.content)
             
+            end_time = time.time()
+            print(f"Image saved to: {filepath}")
+            print(f"Total time: {end_time - start_time:.2f} seconds")
+            
             # Return the path relative to MEDIA_ROOT
             return os.path.join('plots', filename)
     except Exception as e:
-        print(f"Error generating plot image: {e}")
+        print(f"Error generating plot image: {type(e).__name__}: {e}")
     
     return None
 
 
 def generate_user_image(user_input, character_name):
-    """Generate an image for user input using Stable Diffusion."""
+    """Generate an image for user input using Replicate."""
     # Check if Replicate API token is set
     if not settings.REPLICATE_API_TOKEN:
         print("Cannot generate user image: REPLICATE_API_TOKEN is not set")
@@ -328,46 +379,60 @@ def generate_user_image(user_input, character_name):
         
     # Create prompt for a single comic panel
     prompt = f"Comic-style black and white panel showing {character_name}: {user_input[:200]}"
+    print(f"User image prompt: {prompt}")
     
     # Use Replicate API to generate image
     try:
+        print("Generating image with Replicate...")
+        start_time = time.time()
+        
         output = replicate.run(
-            "stability-ai/sdxl:latest",
+            "stability-ai/sdxl-lightning:latest",  # Faster model
             input={
                 "prompt": prompt,
                 "width": 512,
                 "height": 512,
-                "num_outputs": 1
+                "num_outputs": 1,
+                "guidance_scale": 7.5,
+                "negative_prompt": "color, detailed, complex, photorealistic"
             }
         )
         
+        # Download the image
         if output and len(output) > 0:
             image_url = output[0]
+            print(f"Image generated, URL: {image_url}")
             
-            # Download and save the image
             response = requests.get(image_url)
-            if response.status_code == 200:
-                # Create a unique filename
-                filename = f"user_{uuid.uuid4().hex}.jpg"
-                filepath = os.path.join(settings.MEDIA_ROOT, 'responses', filename)
-                
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                
-                # Save the image
-                with open(filepath, 'wb') as f:
-                    f.write(response.content)
-                
-                # Return the path relative to MEDIA_ROOT
-                return os.path.join('responses', filename)
+            if response.status_code != 200:
+                print(f"Failed to download image: {response.status_code}")
+                return None
+            
+            # Create a unique filename
+            filename = f"user_{uuid.uuid4().hex}.jpg"
+            filepath = os.path.join(settings.MEDIA_ROOT, 'responses', filename)
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Save the image
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            
+            end_time = time.time()
+            print(f"Image saved to: {filepath}")
+            print(f"Total time: {end_time - start_time:.2f} seconds")
+            
+            # Return the path relative to MEDIA_ROOT
+            return os.path.join('responses', filename)
     except Exception as e:
-        print(f"Error generating user image: {e}")
+        print(f"Error generating user image: {type(e).__name__}: {e}")
     
     return None
 
 
 def generate_ai_image(ai_response):
-    """Generate a 2-panel comic image for AI response using Stable Diffusion."""
+    """Generate a 2-panel comic image for AI response using Replicate."""
     # Check if Replicate API token is set
     if not settings.REPLICATE_API_TOKEN:
         print("Cannot generate AI image: REPLICATE_API_TOKEN is not set")
@@ -375,21 +440,28 @@ def generate_ai_image(ai_response):
         
     # Create prompt for a 2-panel comic
     prompt = f"Black-and-white comic 2-panel scene showing: {ai_response[:300]}"
+    print(f"AI image prompt: {prompt}")
     
     # Use Replicate API to generate image
     try:
+        print("Generating image with Replicate...")
+        start_time = time.time()
+        
         output = replicate.run(
-            "stability-ai/sdxl:latest",
+            "stability-ai/sdxl-lightning:latest",  # Faster model
             input={
                 "prompt": prompt,
-                "width": 1024,
-                "height": 512,
-                "num_outputs": 1
+                "width": 768,
+                "height": 384,  # Wider format for 2 panels
+                "num_outputs": 1,
+                "guidance_scale": 7.5,
+                "negative_prompt": "color, detailed, complex, photorealistic"
             }
         )
         
         if output and len(output) > 0:
             image_url = output[0]
+            print(f"Image generated, URL: {image_url}")
             
             # Download and save the image
             response = requests.get(image_url)
@@ -405,10 +477,14 @@ def generate_ai_image(ai_response):
                 with open(filepath, 'wb') as f:
                     f.write(response.content)
                 
+                end_time = time.time()
+                print(f"Image saved to: {filepath}")
+                print(f"Total time: {end_time - start_time:.2f} seconds")
+                
                 # Return the path relative to MEDIA_ROOT
                 return os.path.join('responses', filename)
     except Exception as e:
-        print(f"Error generating AI image: {e}")
+        print(f"Error generating AI image: {type(e).__name__}: {e}")
     
     return None
 
