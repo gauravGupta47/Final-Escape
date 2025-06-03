@@ -12,13 +12,26 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import os
 from pathlib import Path
-import dotenv
-
-# Load environment variables from .env file
-dotenv.load_dotenv()
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file - MUST BE FIRST
+env_path = os.path.join(BASE_DIR, '.env')
+if os.path.exists(env_path):
+    print(f"Loading environment variables from {env_path}")
+    load_dotenv(env_path, override=True)
+    
+    # Debug: Print loaded API keys (masked)
+    api_key = os.getenv('OPENAI_API_KEY', '')
+    if api_key:
+        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "[TOO SHORT]"
+        print(f"OpenAI API Key loaded (value: {masked_key})")
+    else:
+        print("Warning: OPENAI_API_KEY not found in environment variables")
+else:
+    print(f"Warning: .env file not found at {env_path}")
 
 
 # Quick-start development settings - unsuitable for production

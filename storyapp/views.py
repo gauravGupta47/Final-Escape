@@ -4,6 +4,7 @@ import openai
 import replicate
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
 from django.http import HttpResponse
 from django.urls import reverse
 from django.core.mail import EmailMessage
@@ -20,16 +21,32 @@ from .forms import UserForm, StoryForm, StoryResponseForm
 from openai import OpenAI
 
 # Create OpenAI client instance - handle empty API key gracefully
-client = None  # Default to None
-if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.strip():
+def get_openai_client():
+    # Debug environment variables
+    import os
+    print("\nDEBUG: Environment variables:")
+    print(f"1. Direct os.getenv: {os.getenv('OPENAI_API_KEY')}")
+    print(f"2. Settings OPENAI_API_KEY: {settings.OPENAI_API_KEY}")
+    print(f"3. All env vars containing 'OPENAI': {[k for k in os.environ.keys() if 'OPENAI' in k]}")
+
+    if not settings.OPENAI_API_KEY or not settings.OPENAI_API_KEY.strip():
+        print("WARNING: OPENAI_API_KEY is not set or empty")
+        return None
+
     try:
-        # Only create client if API key is not empty
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        print("DEBUG: Successfully created OpenAI client")
+        test_response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Say 'OK' if you can hear me"}],
+            max_tokens=5
+        )
+        print(f"DEBUG: Test response received: {test_response.choices[0].message.content}")
+        return client
     except Exception as e:
         print(f"ERROR initializing OpenAI client: {e}")
-        client = None
-else:
-    print("WARNING: OPENAI_API_KEY is not set. Story generation will not work.")
+        print(f"ERROR type: {type(e).__name__}")
+        return None
 
 # Set Replicate API token
 if settings.REPLICATE_API_TOKEN and settings.REPLICATE_API_TOKEN.strip():
@@ -76,20 +93,40 @@ def create_story(request):
             theme = form.cleaned_data['theme']
             character_name = form.cleaned_data['character_name']
             
-            # Generate story plot using GPT
-            plot_text = generate_story_plot(theme.description, character_name)
-            
-            # Generate plot image using Stable Diffusion
-            plot_image_path = generate_plot_image(plot_text)
-            
-            # Create story object
-            story = Story.objects.create(
-                user=user,
-                theme=theme,
-                character_name=character_name,
-                plot_text=plot_text,
-                plot_image_path=plot_image_path
-            )
+            try:
+                # Generate story plot using GPT
+                plot_text = generate_story_plot(theme.description, character_name)
+                
+                # Generate plot image using Stable Diffusion
+                plot_image_path = generate_plot_image(plot_text)
+                
+                # Create story object
+                story = Story.objects.create(
+                    user=user,
+                    theme=theme,
+                    character_name=character_name,
+                    plot_text=plot_text,
+                    plot_image_path=plot_image_path
+                )
+                
+                return redirect('continue_story', story_id=story.id)
+            except Exception as e:
+                print(f"Error creating story: {e}")
+                # Create story without image if generation fails
+                story = Story.objects.create(
+                    user=user,
+                    theme=theme,
+                    character_name=character_name,
+                    plot_text=plot_text
+                )
+                
+                # Add error message to context
+                error_message = "Failed to generate story image. Please try again later."
+                return render(request, 'storyapp/create_story.html', {
+                    'form': form,
+                    'themes': themes,
+                    'error_message': error_message
+                })
             
             return redirect('continue_story', story_id=story.id)
     else:
@@ -131,21 +168,32 @@ def continue_story(request, story_id):
             # Add current user input
             story_context += f"User: {user_input}\n"
             
-            # Generate AI response
-            ai_response = generate_ai_response(story_context)
-            
-            # Generate images for user input and AI response
-            user_img_path = generate_user_image(user_input, story.character_name)
-            ai_img_path = generate_ai_image(ai_response)
-            
-            # Create response object
-            StoryResponse.objects.create(
-                story=story,
-                user_input=user_input,
-                ai_response=ai_response,
-                user_img_path=user_img_path,
-                ai_img_path=ai_img_path
-            )
+            try:
+                # Generate AI response using GPT
+                ai_response = generate_ai_response(story_context)
+                
+                # Generate images using Stable Diffusion
+                user_img_path = generate_user_image(user_input, story.character_name)
+                ai_img_path = generate_ai_image(ai_response)
+                
+                # Create story response
+                response = StoryResponse.objects.create(
+                    story=story,
+                    user_input=user_input,
+                    ai_response=ai_response,
+                    user_img_path=user_img_path,
+                    ai_img_path=ai_img_path
+                )
+            except Exception as e:
+                print(f"Error in continue_story: {e}")
+                # Create story response without images if generation fails
+                ai_response = generate_ai_response(story_context)
+                response = StoryResponse.objects.create(
+                    story=story,
+                    user_input=user_input,
+                    ai_response=ai_response
+                )
+                messages.error(request, "Failed to generate images. The story will continue without them.")
             
             # If we have 10 responses, generate PDF and send email
             if responses.count() >= 9:  # 9 existing + 1 new = 10 total
@@ -177,17 +225,15 @@ def story_complete(request, story_id):
 
 def generate_story_plot(theme_description, character_name):
     """Generate story plot using OpenAI's GPT."""
-    # Check if OpenAI client is available
+    # Get a fresh OpenAI client
+    client = get_openai_client()
     if client is None:
         return f"Once upon a time, there was a character named {character_name} in a {theme_description} world. \nPlease set your OpenAI API key in the .env file to generate real stories."
-    
-    prompt = f"""Create an engaging short story intro in comic book style. 
-    Theme: {theme_description}
-    Main character: {character_name}
-    The story should be child-friendly and have a clear setup for an adventure.
-    Write 3-4 paragraphs to start the story."""
-    
+
     try:
+        # Create the prompt
+        prompt = f"Create an exciting comic book story introduction about a character named {character_name} in the following setting: {theme_description}. Make it engaging and suitable for children. Keep it under 200 words."
+
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -204,21 +250,19 @@ def generate_story_plot(theme_description, character_name):
 
 def generate_ai_response(story_context):
     """Generate AI response using OpenAI's GPT."""
-    # Check if OpenAI client is available
+    # Get a fresh OpenAI client
+    client = get_openai_client()
     if client is None:
         return "The adventure continues... \nPlease set your OpenAI API key in the .env file to generate real story continuations."
-    
-    prompt = f"""Continue this comic book story based on the following context:
-    {story_context}
-    
-    Respond as the narrator/AI continuing the story. Keep your response child-friendly, engaging, 
-    and limited to 2-3 paragraphs. End with a situation that invites further storytelling."""
-    
+
     try:
+        # Create the prompt
+        prompt = f"Continue this comic book story in an engaging way. Keep your response concise (around 100 words) and exciting. Previous story context:\n{story_context}"
+
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a creative comic book writer who creates engaging stories for children."},
+                {"role": "system", "content": "You are a creative comic book writer who creates engaging stories for children. Keep your responses concise and exciting."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300

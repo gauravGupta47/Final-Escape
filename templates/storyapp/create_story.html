@@ -10,6 +10,11 @@
                 <h3 class="mb-0">Create Your Story</h3>
             </div>
             <div class="card-body p-4">
+                {% if error_message %}
+                    <div class="alert alert-danger" role="alert">
+                        {{ error_message }}
+                    </div>
+                {% endif %}
                 <p class="lead mb-4">Welcome, {{ user.email }}! Let's create a comic story together.</p>
                 
                 <form method="post">

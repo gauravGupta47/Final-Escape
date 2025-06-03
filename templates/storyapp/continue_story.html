@@ -3,62 +3,72 @@
 {% block title %}Continue Your Story{% endblock %}
 
 {% block content %}
-<div class="card shadow mb-4">
-    <div class="card-header bg-primary text-white">
-        <h3 class="mb-0">{{ story.character_name }}'s {{ story.theme.name }} Adventure</h3>
-    </div>
-    <div class="card-body">
-        <div class="story-intro mb-4">
-            <h4>Story Introduction:</h4>
-            <div class="row">
-                <div class="col-md-8">
-                    <p class="story-text">{{ story.plot_text|linebreaks }}</p>
-                </div>
-                <div class="col-md-4">
-                    {% if story.plot_image_path %}
-                    <img src="/media/{{ story.plot_image_path }}" alt="Story Introduction" class="img-fluid rounded">
-                    {% endif %}
-                </div>
+<div class="container mt-5">
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}" role="alert">
+                {{ message }}
             </div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="card shadow mb-4">
+        <div class="card-header bg-primary text-white">
+            <h3 class="mb-0">{{ story.character_name }}'s {{ story.theme.name }} Adventure</h3>
         </div>
-        
-        {% if responses %}
-        <div class="story-responses mb-4">
-            <h4>Story Progress:</h4>
-            {% for response in responses %}
-            <div class="card mb-3">
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <h5>{{ story.character_name }}:</h5>
-                            <p>{{ response.user_input|linebreaks }}</p>
-                            {% if response.user_img_path %}
-                            <img src="/media/{{ response.user_img_path }}" alt="User Response" class="img-fluid rounded mb-3">
-                            {% endif %}
-                        </div>
-                        <div class="col-md-6">
-                            <h5>AI:</h5>
-                            <p>{{ response.ai_response|linebreaks }}</p>
-                            {% if response.ai_img_path %}
-                            <img src="/media/{{ response.ai_img_path }}" alt="AI Response" class="img-fluid rounded mb-3">
-                            {% endif %}
-                        </div>
+        <div class="card-body">
+            <div class="story-intro mb-4">
+                <h4>Story Introduction:</h4>
+                <div class="row">
+                    <div class="col-md-8">
+                        <p class="story-text">{{ story.plot_text|linebreaks }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        {% if story.plot_image_path %}
+                            <img src="/media/{{ story.plot_image_path }}" alt="Story Introduction" class="img-fluid rounded">
+                        {% endif %}
                     </div>
                 </div>
             </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        
-        <div class="story-input">
-            <h4>What happens next?</h4>
-            <form method="post">
-                {% csrf_token %}
-                <div class="mb-3">
-                    {{ form.user_input }}
+
+            {% if responses %}
+                <div class="story-responses mb-4">
+                    <h4>Story Progress:</h4>
+                    {% for response in responses %}
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <h5>{{ story.character_name }}:</h5>
+                                        <p>{{ response.user_input|linebreaks }}</p>
+                                        {% if response.user_img_path %}
+                                            <img src="/media/{{ response.user_img_path }}" alt="User Response" class="img-fluid rounded mb-3">
+                                        {% endif %}
+                                    </div>
+                                    <div class="col-md-6">
+                                        <h5>AI:</h5>
+                                        <p>{{ response.ai_response|linebreaks }}</p>
+                                        {% if response.ai_img_path %}
+                                            <img src="/media/{{ response.ai_img_path }}" alt="AI Response" class="img-fluid rounded mb-3">
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
                 </div>
-                <button type="submit" class="btn btn-primary">Continue the Story</button>
-            </form>
+            {% endif %}
+            
+            <div class="story-input">
+                <h4>What happens next?</h4>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        {{ form.user_input }}
+                    </div>
+                    <button type="submit" class="btn btn-primary">Continue the Story</button>
+                </form>
+            </div>
         </div>
     </div>
 </div>
